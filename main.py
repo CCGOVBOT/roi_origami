@@ -44,7 +44,7 @@ for file_path in excel_files:
             # Read sheet, using 5th row as header (skip first 4 rows)
             df = excel_file.parse(sheet_name=sheet_name, header=4)
 
-            # Optionally add a column with the report date
+            # Add a column with the report date
             df["report_date"] = report_date
 
             # Combine with existing data for the same sheet
