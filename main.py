@@ -7,6 +7,16 @@ import re
 from dotenv import load_dotenv
 load_dotenv()
 
+#%% two metrics in scope from Origami reports:
+# Open workers' compensation claims per adjuster (#12871)
+    # = SUM(Grand Total Claim Count) / COUNT(# of Adjuster Users)
+    # uses "Average Adjuster Caseload (ROI)" tab
+
+# Workers' compensation claim closing ratio (#12210)
+    # = SUM(Closed Claim Count) / SUM(Open Claim Count)
+    # uses "Open WC (ROI)" and "Closed WC (ROI)" tabs
+
+
 #%% roi.save_email_attachments function
 os.makedirs("email_attachments", exist_ok=True)
 
