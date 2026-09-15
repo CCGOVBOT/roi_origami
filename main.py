@@ -1,3 +1,26 @@
+#%% Risk Management metrics derived from Origami scheduled reports:
+    # 1. Number of open workers' compensation claims
+    # 2. Number of closed workers' compensation claims
+    # 3. Workers' Compensation Claim Closing Ratio
+    # 4. Number of adjuster claims
+    # 5. Number of adjusters
+    # 6. Average Adjuster Caseload
+
+# County Fiscal Calender
+# Fiscal year: December 1 through November 30
+# Mid-year: December through May
+# Year-end: December through November
+
+# Important: The report filename date represents the first day of the following month.
+# Therefore, report_date below represents the actual month of the completed data.
+
+# Example:
+#   File date = 2026-01-01
+#   Data month = December 2025
+#   Start date = 2025-12-01
+#   End date = 2025-12-31
+
+
 #%% Imports
 import os
 from pathlib import Path
@@ -7,54 +30,71 @@ import re
 from dotenv import load_dotenv
 load_dotenv()
 
-#%% two metrics in scope from Origami reports:
-# Open workers' compensation claims per adjuster (#12871)
-    # = SUM(Grand Total Claim Count) / COUNT(# of Adjuster Users)
-    # uses "Average Adjuster Caseload (ROI)" tab
-
-# Workers' compensation claim closing ratio (#12210)
-    # = SUM(Closed Claim Count) / SUM(Open Claim Count)
-    # uses "Open WC (ROI)" and "Closed WC (ROI)" tabs
-
-
-#%% roi.save_email_attachments function
+#%% roi.save_email_attachments function to download attachments from Origami scheduled reports
 os.makedirs("email_attachments", exist_ok=True)
 
 sender_name = 'notifications@origamirisk.com'
 
-roi.save_email_attachments(sendername_contains=sender_name, save_directory="email_attachments")
+roi.save_email_attachments(
+    sendername_contains=sender_name,
+    save_directory="email_attachments"
+)
 
-#%% Folder where ssaved excel attachments are saved
+
+#%% Folder where saved excel attachments are saved
 attachments_path = Path("email_attachments")
 
 # Create dictionary to store combined sheet data by sheet name
 monthly_data = {}  # { sheet_name: dataframe }
 
+
 # Function to extract date from filename (YYYY-MM-DD)
 def extract_date_from_filename(filename):
     match = re.search(r'\d{4}-\d{2}-\d{2}', filename)
+
     if match:
         return match.group(0)
+
     return None
 
+
 # Get all Excel files
-excel_files = list(attachments_path.glob("*.xlsx")) + list(attachments_path.glob("*.xls"))
+excel_files = (
+    list(attachments_path.glob("*.xlsx"))
+    + list(attachments_path.glob("*.xls"))
+)
+
 
 for file_path in excel_files:
-    report_date = extract_date_from_filename(file_path.name)
-    if not report_date:
+
+    filename_date = extract_date_from_filename(file_path.name)
+
+    if not filename_date:
         print(f"Could not extract date from filename: {file_path.name}")
         continue
 
     try:
+        # The filename date represents the first day of the following month.
+        # Example: 2026-01-01 report = December 2025 data.
+        report_date = pd.to_datetime(filename_date) - pd.DateOffset(months=1)
+
         excel_file = pd.ExcelFile(file_path)
-        print(f"Processing file: {file_path.name} (Report date: {report_date})")
+
+        print(
+            f"Processing file: {file_path.name} "
+            f"(Data month: {report_date.strftime('%Y-%m')})"
+        )
 
         for sheet_name in excel_file.sheet_names:
-            # Read sheet, using 5th row as header (skip first 4 rows)
-            df = excel_file.parse(sheet_name=sheet_name, header=4)
 
-            # Add a column with the report date
+            # Read sheet using 5th row as header
+            # (skip first 4 rows)
+            df = excel_file.parse(
+                sheet_name=sheet_name,
+                header=4
+            )
+
+            # Add the actual month represented by the report
             df["report_date"] = report_date
 
             # Combine with existing data for the same sheet
@@ -66,33 +106,51 @@ for file_path in excel_files:
             else:
                 monthly_data[sheet_name] = df
 
-            print(f"Processed sheet: {sheet_name} ({len(df)} rows)")
+            print(
+                f"Processed sheet: {sheet_name} "
+                f"({len(df)} rows)"
+            )
 
     except Exception as e:
         print(f"Error reading {file_path.name}: {e}")
 
-#%% 
-# Create combined data file for each unique sheet name to consolidate metric logic as new monthly data is added
+
+#%% Create combined data file for each unique sheet name
+
 for sheet_name, df in monthly_data.items():
-    print(f"Combined data for sheet '{sheet_name}': {len(df)} total rows")
-    # save combined data to a new Excel file
+
+    print(
+        f"Combined data for sheet '{sheet_name}': "
+        f"{len(df)} total rows"
+    )
+
     output_file = attachments_path / f"combined_{sheet_name}.xlsx"
-    df.to_excel(output_file, index=False)
+
+    df.to_excel(
+        output_file,
+        index=False
+    )
+
     print(f"Saved combined data to: {output_file}")
 
 
-# %% Create dataframes for each new combined file under email_attachments
+#%% Create dataframes for each new combined file under email_attachments
 
-# Dictionary to store dataframes
 dataframes = {}
+
 
 # Function to clean and standardize dataframe keys from filenames
 def clean_name(filename: str) -> str:
-    # Remove extension
+
     name = Path(filename).stem
 
     # Remove prefix "combined"
-    name = re.sub(r"^combined[_\- ]*", "", name, flags=re.IGNORECASE)
+    name = re.sub(
+        r"^combined[_\- ]*",
+        "",
+        name,
+        flags=re.IGNORECASE
+    )
 
     # Stop before "(ROI)"
     name = name.split("(")[0]
@@ -100,52 +158,75 @@ def clean_name(filename: str) -> str:
     # Lowercase
     name = name.lower()
 
-    # Replace spaces, hyphens with underscores
-    name = re.sub(r"[\s\-]+", "_", name)
+    # Replace spaces and hyphens with underscores
+    name = re.sub(
+        r"[\s\-]+",
+        "_",
+        name
+    )
 
     # Remove any characters not letters, numbers, or underscore
-    name = re.sub(r"[^a-z0-9_]", "", name)
+    name = re.sub(
+        r"[^a-z0-9_]",
+        "",
+        name
+    )
 
     # Remove multiple consecutive underscores
-    name = re.sub(r"_+", "_", name)
+    name = re.sub(
+        r"_+",
+        "_",
+        name
+    )
 
     # Trim leading/trailing underscores
     name = name.strip("_")
 
     return name
 
+
 # Load combined files
 for file in attachments_path.glob("combined*.xlsx"):
+
     df_key = clean_name(file.name)
+
     dataframes[df_key] = pd.read_excel(file)
 
 print("Loaded DataFrames:", list(dataframes.keys()))
 
-# %% Metrics in scope [with relevant dataframe(s)]:
-    #1   Workers' Compensation Claim Closing Ratio ['closed_wc', 'open_wc']
-    #2   Worker's Compensation Closed ['closed_wc']
-    #3   Worker's Compensation New Opens ['open_wc']
-    #4   Average Adjuster Caseload ['average_adjuster_caseload']
 
-# Metrics #1-3: Workers' Compensation 
-# Function to clean workers' compensation dataframes
+#%% Workers' Compensation Metrics
+
 def clean_wc(df):
+
     df = df.copy()
-    
-    # Remove "Grand Total" rows
-    df = df[~df['Coverage'].str.contains("Grand Totals", na=False)]
-    
-    # Ensure date is datetime
+
+    # Remove "Grand Totals" rows
+    df = df[
+        ~df['Coverage'].str.contains(
+            "Grand Totals",
+            na=False
+        )
+    ]
+
+    # Ensure report_date is datetime
     df['report_date'] = pd.to_datetime(df['report_date'])
-    
+
     # Keep only relevant columns
-    df = df[['report_date', 'Claim Count']]
-    
+    df = df[
+        [
+            'report_date',
+            'Claim Count'
+        ]
+    ]
+
     return df
+
 
 # Apply clean_wc function to both dataframes
 open_wc = clean_wc(dataframes['open_wc'])
 closed_wc = clean_wc(dataframes['closed_wc'])
+
 
 # Monthly totals for open claims
 open_monthly = (
@@ -154,6 +235,7 @@ open_monthly = (
     .reset_index(name='open_claims')
 )
 
+
 # Monthly totals for closed claims
 closed_monthly = (
     closed_wc.groupby('report_date')['Claim Count']
@@ -161,97 +243,492 @@ closed_monthly = (
     .reset_index(name='closed_claims')
 )
 
-wc_output = open_monthly.merge(closed_monthly, on='report_date', how='outer')
 
-# Calculate closing ratio = closed claims / open claims
-wc_output['closing_ratio'] = wc_output['closed_claims'] / wc_output['open_claims']
+# Combine open and closed claims
+wc_output = open_monthly.merge(
+    closed_monthly,
+    on='report_date',
+    how='outer'
+)
 
+
+# Calculate monthly closing ratio
+wc_output['closing_ratio'] = (
+    wc_output['closed_claims'] / wc_output['open_claims']
+)
+
+
+print("\nWorkers' Compensation Monthly Output:")
 print(wc_output)
 
 
-# %%
-# Metric #4: Average Adjuster Caseload ['average_adjuster_caseload']
+#%% Adjuster Metrics
 
-# Function to clean average adjuster caseload dataframe
 def clean_adjuster_df(df):
+
     df = df.copy()
-    
+
     # Remove "Grand Totals" rows
-    df = df[~df['Adjuster User'].str.contains("Grand Totals", na=False)]
-    
+    df = df[
+        ~df['Adjuster User'].str.contains(
+            "Grand Totals",
+            na=False
+        )
+    ]
+
     # Ensure report_date is datetime
     df['report_date'] = pd.to_datetime(df['report_date'])
-    
+
     # Keep only relevant columns
-    df = df[['report_date', 'Adjuster User', 'Claim Count']]
-    
+    df = df[
+        [
+            'report_date',
+            'Adjuster User',
+            'Claim Count'
+        ]
+    ]
+
     return df
 
-# Apply cleaning function
-average_adjuster_caseload = clean_adjuster_df(dataframes['average_adjuster_caseload'])
 
-# Calculate monthly totals
+# Apply cleaning function
+average_adjuster_caseload = clean_adjuster_df(
+    dataframes['average_adjuster_caseload']
+)
+
+
+# Monthly total adjuster claims
 monthly_totals = (
     average_adjuster_caseload.groupby('report_date')['Claim Count']
     .sum()
     .reset_index(name='total_claims')
 )
 
-# Calculate number of unique adjusters per month
+
+# Monthly number of unique adjusters
 monthly_adjusters = (
     average_adjuster_caseload.groupby('report_date')['Adjuster User']
     .nunique()
     .reset_index(name='num_adjusters')
 )
 
-# Merge claim and adjuster count to calculate average caseload
-monthly_caseload = monthly_totals.merge(monthly_adjusters, on='report_date')
-monthly_caseload['average_caseload'] = monthly_caseload['total_claims'] / monthly_caseload['num_adjusters']
 
-print(monthly_caseload)
-
-# %% create combined_outputs merging wc_output and monthly_caseload
-
-# merge dataframes on report_date
-combined_outputs = wc_output.merge(
-    monthly_caseload[['report_date', 'average_caseload']],
+# Combine adjuster metrics
+monthly_caseload = monthly_totals.merge(
+    monthly_adjusters,
     on='report_date',
-    how='left'  # keep all months from final
+    how='outer'
 )
 
-# transpose data so that each metric is a row
-combined_outputs = combined_outputs.melt(id_vars=['report_date'], var_name='metric', value_name='value')
 
-# change report_date to start_date
-combined_outputs.rename(columns={'report_date': 'start_date'}, inplace=True)
+# Monthly average adjuster caseload
+monthly_caseload['average_caseload'] = (
+    monthly_caseload['total_claims'] / monthly_caseload['num_adjusters']
+)
 
-# add in end_date as end of month
-combined_outputs['end_date'] = combined_outputs['start_date'] + pd.offsets.MonthEnd(0)
 
+print("\nAdjuster Monthly Output:")
+print(monthly_caseload)
+
+
+#%% Combine monthly metrics
+
+combined_outputs = wc_output.merge(
+    monthly_caseload[
+        [
+            'report_date',
+            'total_claims',
+            'num_adjusters',
+            'average_caseload'
+        ]
+    ],
+    on='report_date',
+    how='outer'
+)
+
+
+combined_outputs = combined_outputs.sort_values(
+    'report_date'
+).reset_index(drop=True)
+
+
+print("\nCombined Monthly Metrics:")
 print(combined_outputs)
 
-# %% rename metrics in metric column to full metric name and add in metric ID column
+
+#%% Calculate Fiscal Year
+
+def get_fiscal_year(date):
+
+    """
+    Fiscal year runs December 1 through November 30.
+
+    Example:
+        December 2025 through November 2026 = FY2026
+    """
+
+    if date.month == 12:
+        return date.year + 1
+
+    return date.year
+
+
+combined_outputs['fiscal_year'] = (
+    combined_outputs['report_date']
+    .apply(get_fiscal_year)
+)
+
+
+#%% Calculate Fiscal Period Metrics
+def calculate_fiscal_metrics(monthly_df, fiscal_period):
+
+    """
+    Calculate fiscal-period metrics only when ALL months required
+    for the fiscal period are available in the data.
+
+    Mid-year:
+        December through May (6 months required)
+
+    Year-end:
+        December through November (12 months required)
+
+    Count metrics are summed.
+
+    Rate/average metrics are recalculated from the
+    underlying totals rather than averaging monthly rates.
+
+    If any required month is missing, no fiscal-period
+    record is created for that fiscal year.
+    """
+
+    results = []
+
+    for fiscal_year, fy_data in monthly_df.groupby('fiscal_year'):
+
+        fy_data = fy_data.sort_values(
+            'report_date'
+        ).copy()
+
+        # Define the expected months for the fiscal period
+
+        if fiscal_period == 'mid_year':
+
+            # FY2026 = Dec 2025 through May 2026
+            expected_dates = pd.date_range(
+                start=pd.Timestamp(fiscal_year - 1, 12, 1),
+                end=pd.Timestamp(fiscal_year, 5, 1),
+                freq='MS'
+            )
+
+        elif fiscal_period == 'year_end':
+
+            # FY2026 = Dec 2025 through Nov 2026
+            expected_dates = pd.date_range(
+                start=pd.Timestamp(fiscal_year - 1, 12, 1),
+                end=pd.Timestamp(fiscal_year, 11, 1),
+                freq='MS'
+            )
+
+        else:
+            raise ValueError(
+                "fiscal_period must be 'mid_year' or 'year_end'"
+            )
+
+        # Normalize report dates to month-start
+
+        fy_data['report_month'] = (
+            fy_data['report_date']
+            .dt.to_period('M')
+            .dt.to_timestamp()
+        )
+
+        # Check whether ALL required months are available
+
+        available_dates = set(
+            fy_data['report_month']
+        )
+
+        missing_dates = [
+            date
+            for date in expected_dates
+            if date not in available_dates
+        ]
+
+        if missing_dates:
+
+            print(
+                f"Skipping FY{fiscal_year} {fiscal_period}: "
+                f"missing month(s): "
+                f"{', '.join(d.strftime('%Y-%m') for d in missing_dates)}"
+            )
+
+            continue
+
+        # Select only the required months
+
+        period_data = fy_data[
+            fy_data['report_month'].isin(expected_dates)
+        ].copy()
+
+        # Calculate total count metrics
+
+        total_open_claims = (
+            period_data['open_claims'].sum()
+        )
+
+        total_closed_claims = (
+            period_data['closed_claims'].sum()
+        )
+
+        total_adjuster_claims = (
+            period_data['total_claims'].sum()
+        )
+
+        total_adjusters = (
+            period_data['num_adjusters'].sum()
+        )
+
+        # Recalculate closing ratio from underlying totals
+
+        if total_open_claims != 0:
+
+            closing_ratio = (
+                total_closed_claims /
+                total_open_claims
+            )
+
+        else:
+
+            closing_ratio = None
+
+        # Recalculate average adjuster caseload
+
+        if total_adjusters != 0:
+
+            average_caseload = (
+                total_adjuster_claims /
+                total_adjusters
+            )
+
+        else:
+
+            average_caseload = None
+
+        # Create fiscal-period record
+
+        results.append({
+            'fiscal_year': fiscal_year,
+            'period_type': fiscal_period,
+            'start_date': expected_dates.min(),
+            'end_date': expected_dates.max() + pd.offsets.MonthEnd(0),
+            'open_claims': total_open_claims,
+            'closed_claims': total_closed_claims,
+            'closing_ratio': closing_ratio,
+            'total_claims': total_adjuster_claims,
+            'average_caseload': average_caseload
+        })
+
+    return pd.DataFrame(results)
+
+
+#%% Calculate Mid-Year Metrics
+mid_year_outputs = calculate_fiscal_metrics(
+    combined_outputs,
+    'mid_year'
+)
+
+print("\nFiscal Year Mid-Year Metrics:")
+print(mid_year_outputs)
+
+
+#%% Calculate Year-End Metrics
+year_end_outputs = calculate_fiscal_metrics(
+    combined_outputs,
+    'year_end'
+)
+
+print("\nFiscal Year Year-End Metrics:")
+print(year_end_outputs)
+
+
+#%% Convert Fiscal Metrics to Output Format
+def format_fiscal_output(fiscal_df):
+
+    if fiscal_df.empty:
+        return pd.DataFrame(
+            columns=[
+                'start_date',
+                'end_date',
+                'metric',
+                'value',
+                'fiscal_year',
+                'period_type'
+            ]
+        )
+
+    metric_columns = [
+        'open_claims',
+        'closed_claims',
+        'closing_ratio',
+        'total_claims',
+        'average_caseload'
+    ]
+
+    output = fiscal_df.melt(
+        id_vars=[
+            'fiscal_year',
+            'period_type',
+            'start_date',
+            'end_date'
+        ],
+        value_vars=metric_columns,
+        var_name='metric',
+        value_name='value'
+    )
+
+    return output
+
+
+mid_year_formatted = format_fiscal_output(
+    mid_year_outputs
+)
+
+year_end_formatted = format_fiscal_output(
+    year_end_outputs
+)
+
+
+#%% Add Monthly Output Metadata
+
+combined_outputs['period_type'] = 'monthly'
+
+
+# Rename report_date to start_date
+monthly_formatted = combined_outputs.rename(
+    columns={
+        'report_date': 'start_date'
+    }
+).copy()
+
+
+# Add end_date as end of month
+monthly_formatted['end_date'] = (
+    monthly_formatted['start_date']
+    + pd.offsets.MonthEnd(0)
+)
+
+
+# Keep required output columns
+monthly_formatted = monthly_formatted[
+    [
+        'start_date',
+        'end_date',
+        'open_claims',
+        'closed_claims',
+        'closing_ratio',
+        'total_claims',
+        'num_adjusters',
+        'average_caseload',
+        'fiscal_year',
+        'period_type'
+    ]
+]
+
+
+# Melt monthly metrics
+monthly_formatted = monthly_formatted.melt(
+    id_vars=[
+        'start_date',
+        'end_date',
+        'fiscal_year',
+        'period_type'
+    ],
+    value_vars=[
+        'open_claims',
+        'closed_claims',
+        'closing_ratio',
+        'total_claims',
+        'num_adjusters',
+        'average_caseload'
+    ],
+    var_name='metric',
+    value_name='value'
+)
+
+
+#%% Combine Monthly, Mid-Year, and Year-End Outputs
+
+combined_outputs = pd.concat(
+    [
+        monthly_formatted,
+        mid_year_formatted,
+        year_end_formatted
+    ],
+    ignore_index=True
+)
+
+
+#%% Rename Metrics and Add Metric IDs
 
 metric_name_map = {
-    'open_claims': "Worker's Compensation New Opens",
-    'closed_claims': "Worker's Compensation Closed",
+    'open_claims': "Number of open workers' compensation claims",
+    'closed_claims': "Number of closed workers' compensation claims",
     'closing_ratio': "Workers' Compensation Claim Closing Ratio",
+    'total_claims': "Number of adjuster claims",
+    'num_adjusters': "Number of adjusters",
     'average_caseload': "Average Adjuster Caseload"
 }
 
+
 metric_id_map = {
     "Workers' Compensation Claim Closing Ratio": 12210,
-    "Worker's Compensation Closed": 12496,
-    "Worker's Compensation New Opens": 12495,
-    "Average Adjuster Caseload": 12871
+    "Number of open workers' compensation claims": 102500,
+    "Number of closed workers' compensation claims": 102501,
+    "Average Adjuster Caseload": 12871,
+    "Number of adjuster claims": 102498,
+    "Number of adjusters": 102499
 }
 
-combined_outputs['metric'] = combined_outputs['metric'].map(metric_name_map)
-combined_outputs['metric_id'] = combined_outputs['metric'].map(metric_id_map)
 
-print(combined_outputs)
+# Map metric names
+combined_outputs['metric'] = (
+    combined_outputs['metric'].map(metric_name_map)
+)
 
 
-# %% Write to sql database
-roi.roi_merge_metric_data(combined_outputs)
-# %%
+# Map metric IDs
+combined_outputs['metric_id'] = (
+    combined_outputs['metric'].map(metric_id_map)
+)
+
+
+#%% Sort Final Output
+
+period_order = {
+    'monthly': 1,
+    'mid_year': 2,
+    'year_end': 3
+}
+
+combined_outputs['period_order'] = (
+    combined_outputs['period_type'].map(period_order)
+)
+
+
+combined_outputs = combined_outputs.sort_values(
+    by=[
+        'fiscal_year',
+        'end_date',
+        'period_order',
+        'metric'
+    ]
+).reset_index(drop=True)
+
+# Drop unneccessary columns for final output merge
+combined_outputs = combined_outputs.drop(columns=['period_order', 'fiscal_year', 'period_type'])
+
+# clean the dataframe by dropping rows with any NaN values
+final_output = combined_outputs.dropna()
+
+#%% Write to SQL database
+roi.roi_merge_metric_data(final_output)
